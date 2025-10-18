@@ -881,28 +881,29 @@ async def upload_async(
         if validation_result and 'file_hash' in validation_result:
             authenticity = calculate_authenticity_score(validation_result['file_hash'])
         
-        # Save to Supabase database using DatabaseManager
+        # Save to database (Supabase primary, SQLite fallback)
+        content_data = {
+            'content_id': content_id,
+            'uploader_id': uploader_id,
+            'title': title,
+            'description': description,
+            'file_path': file_path,
+            'content_type': validation_result['mime_type'] if validation_result else (file.content_type or 'application/octet-stream'),
+            'uploaded_at': uploaded_at,
+            'authenticity_score': authenticity,
+            'current_tags': json.dumps(tags),
+            'views': 0,
+            'likes': 0,
+            'shares': 0
+        }
+        
+        # Try Supabase first
+        saved_to_supabase = False
         try:
             from core.database import DatabaseManager
-            content_data = {
-                'content_id': content_id,
-                'uploader_id': uploader_id,
-                'title': title,
-                'description': description,
-                'file_path': file_path,
-                'content_type': validation_result['mime_type'] if validation_result else (file.content_type or 'application/octet-stream'),
-                'uploaded_at': uploaded_at,
-                'authenticity_score': authenticity,
-                'current_tags': json.dumps(tags),
-                'views': 0,
-                'likes': 0,
-                'shares': 0
-            }
-            
-            # Use DatabaseManager to create content
             db_content = DatabaseManager.create_content(content_data)
-            import logging
-            logging.info(f"Content saved to Supabase: {content_id}")
+            saved_to_supabase = True
+            print(f"✅ Content saved to Supabase: {content_id}")
             
             # Save to system logs
             try:
@@ -1069,28 +1070,47 @@ async def upload_async(
                 logging.warning(f"Failed to save upload log: {log_error}")
                 
         except Exception as db_error:
-            import logging
-            logging.error(f"Supabase save failed: {db_error}")
-            
-            # Fallback to SQLite
-            try:
-                import sqlite3
-                local_conn = sqlite3.connect('data.db')
-                with local_conn:
-                    cur = local_conn.cursor()
-                    cur.execute("""
-                        INSERT OR REPLACE INTO content (content_id, uploader_id, title, description, file_path, content_type, uploaded_at, authenticity_score, current_tags, views, likes, shares)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        content_id, uploader_id, title, description, file_path,
-                        validation_result['mime_type'] if validation_result else (file.content_type or 'application/octet-stream'), uploaded_at,
-                        authenticity, json.dumps(tags), 0, 0, 0
-                    ))
-                local_conn.close()
-                logging.info(f"Content saved to SQLite fallback: {content_id}")
-            except Exception as sqlite_error:
-                logging.error(f"Both Supabase and SQLite failed: {sqlite_error}")
-                print(f"Database save failed: {db_error}")
+            print(f"❌ Supabase save failed: {db_error}")
+            saved_to_supabase = False
+        
+        # Always save to SQLite as backup/fallback
+        try:
+            import sqlite3
+            local_conn = sqlite3.connect('data.db')
+            with local_conn:
+                cur = local_conn.cursor()
+                # Create table if not exists
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS content (
+                        content_id TEXT PRIMARY KEY,
+                        uploader_id TEXT,
+                        title TEXT,
+                        description TEXT,
+                        file_path TEXT,
+                        content_type TEXT,
+                        duration_ms INTEGER,
+                        uploaded_at REAL,
+                        authenticity_score REAL,
+                        current_tags TEXT,
+                        views INTEGER DEFAULT 0,
+                        likes INTEGER DEFAULT 0,
+                        shares INTEGER DEFAULT 0
+                    )
+                """)
+                cur.execute("""
+                    INSERT OR REPLACE INTO content (content_id, uploader_id, title, description, file_path, content_type, uploaded_at, authenticity_score, current_tags, views, likes, shares)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    content_id, uploader_id, title, description, file_path,
+                    content_data['content_type'], uploaded_at,
+                    authenticity, json.dumps(tags), 0, 0, 0
+                ))
+            local_conn.close()
+            print(f"✅ Content saved to SQLite: {content_id}")
+        except Exception as sqlite_error:
+            print(f"❌ SQLite save also failed: {sqlite_error}")
+            if not saved_to_supabase:
+                raise HTTPException(status_code=500, detail="Failed to save to both databases")
         
         # Register content with RL agent for future recommendations (async)
         try:
@@ -1218,7 +1238,7 @@ async def upload_async(
         
         # Return enhanced detailed response
         return {
-            "message": "✅ Content uploaded successfully with enhanced security validation",
+            "message": f"✅ Content uploaded successfully {'(Supabase + SQLite)' if saved_to_supabase else '(SQLite fallback)'}"
             "content_id": content_id,
             "title": title,
             "description": description,
