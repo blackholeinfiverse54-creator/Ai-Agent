@@ -321,7 +321,7 @@ ai-agent/
 ## Setup & Installation
 
 Clone the project and enter the directory
-git clone https://github.com/Ashmit-299/Ai-Agent.git && cd Ai-Agent
+git clone https://github.com/blackholeinfiverse54-creator/Ai-Agent.git && cd Ai-Agent
 
 Create and activate Python virtual environment
 python3 -m venv env
@@ -344,7 +344,7 @@ text
 
 ```bash
 # 1. Clone repository
-git clone https://github.com/Ashmit-299/Ai-Agent.git
+git clone https://github.com/blackholeinfiverse54-creator/Ai-Agent.git
 cd Ai-Agent
 
 # 2. Create virtual environment
